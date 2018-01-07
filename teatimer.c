@@ -8,8 +8,8 @@
  *
  * Usage:
  * Push the button to wake up the teatimer. The led signalizes operating mode
- * by brightness at 50%.
- * Set number of minutes to countdown by number of clicks on the button.
+ * by low brightness.
+ * Set time to countdown by number of button clicks where one click is 30 seconds.
  * The led signalizes a confirmed button click by a blink at 100% of brightness.
  * Maximum delay between taps is 3 seconds.
  * The countdown is started automaticaly in 3 seconds after last tap.
@@ -325,7 +325,7 @@ int main (void)
 		/* COUNTDOWN */
 		
 		sc = millis();
-		uint64_t cdwn = minute_cnt * 1000UL * 5;
+		uint64_t cdwn = minute_cnt * 1000UL * 30;
 		uint8_t led_br = 0;		
 		uint8_t led_rg = LED_BR_BREATHE_MAX - LED_BR_BREATHE_MIN; // brightness ranage		
 		uint8_t led_ph = 1;		
