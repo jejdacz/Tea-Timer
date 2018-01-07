@@ -36,6 +36,7 @@
 
 // setup countdown in ms
 #define SETUP_CDWN 3000
+#define SETUP_IDLE 10000
 
 // safety input read delay in us
 // bounce elimination
@@ -56,23 +57,23 @@
 // steep time
 uint8_t minute_cnt;
 
-uint64_t btn_last_read;
+uint32_t btn_last_read;
 
 // button state
-enum btn_st { B_IDLE, B_PRESSED, B_HOLDING, B_RELEASED };
+enum btn_state { B_IDLE, B_PRESSED, B_HOLDING, B_RELEASED };
 
-enum btn_st bs;
+enum btn_state btn_st;
 
 // device state
-enum dev_st { D_IDLE, D_SETUP, D_COUNTDOWN, D_ALARM, D_SLEEP, D_WAKEUP };
+enum dev_state { D_IDLE, D_SETUP, D_COUNTDOWN, D_ALARM };
 
-enum dev_st ds;
+enum dev_state dev_st;
 
 // functions prototypes
 void on_wakeup();
 
 // counter of microseconds
-volatile uint64_t micros_cnt;
+volatile uint32_t micros_cnt;
 
 /**
  * Inits TIMER0 for micros.
@@ -97,21 +98,21 @@ void micros_init()
  */
 ISR(TIMER0_OVF_vect)
 {    
-    micros_cnt += 255;     
+    micros_cnt++;     
 }
 
 /**
  * Returns number of microseconds from start.
  */
-uint64_t micros()
+uint32_t micros()
 {
-	return micros_cnt + TCNT0;
+	return micros_cnt * 256 + TCNT0;
 }
 
 /**
  * Returns number of milliseconds from start.
  */
-uint64_t millis()
+uint32_t millis()
 {
 	return micros() / 1000;
 }
@@ -205,24 +206,24 @@ void read_button() {
 		btn_last_read = micros();
 	}
 		
-		if (bs == B_IDLE && ((PINB & (1 << BTN_PIN)) == 0))
+		if (btn_st == B_IDLE && ((PINB & (1 << BTN_PIN)) == 0))
 		{
-			bs = B_PRESSED;			
+			btn_st = B_PRESSED;			
 		}				
-		else if (bs == B_PRESSED || bs == B_HOLDING)
+		else if (btn_st == B_PRESSED || btn_st == B_HOLDING)
 		{			
 			if (PINB & (1 << BTN_PIN))
 			{
-				bs = B_RELEASED;
+				btn_st = B_RELEASED;
 			}
 			else
 			{
-				bs = B_HOLDING;
+				btn_st = B_HOLDING;
 			}
 		}		
-		else if (bs == B_RELEASED)
+		else if (btn_st == B_RELEASED)
 		{
-			bs = B_IDLE;
+			btn_st = B_IDLE;
 		}				
 }
 
@@ -262,7 +263,7 @@ void on_wakeup() {
 		
 	read_button();
 	
-	while (bs != B_RELEASED)
+	while (btn_st != B_RELEASED)
 	{
 		read_button();
 		_delay_ms(5);
@@ -271,8 +272,8 @@ void on_wakeup() {
 	// set device to defaults
 	minute_cnt = 0;
 	btn_last_read = 0;
-	bs = B_IDLE;	
-	ds = D_IDLE;
+	btn_st = B_IDLE;	
+	dev_st = D_IDLE;
 	
 	led_on();
 	led(LED_BR_SETUP);
@@ -293,159 +294,193 @@ int main (void)
 	on_wakeup();	
 	
 	while (1)
-	{  	
+	{
+	  	
   		/* SETUP */
   		
-  		uint64_t sc = millis();
-  		  		
-  		while (ds == D_IDLE || ds == D_SETUP)
-  		{	  		
-		    read_button();
-		    
-		    if (bs == B_PRESSED)
-		    {
-				led(LED_BR_FULL);    	
-				spk_on();
+  		if (dev_st == D_IDLE)
+  		{  		
+	  		uint32_t sc = millis();
+	  		uint8_t setup = 0;
+	  		  		
+	  		while (1)
+	  		{	  		
+				read_button();
+				
+				// handle click
+				if (btn_st == B_PRESSED)
+				{
+					led(LED_BR_FULL);    	
+					spk_on();
 					
-				_delay_ms(70);
+					_delay_ms(70);
 				
-				led(LED_BR_SETUP);
-				spk_off();
+					led(LED_BR_SETUP);
+					spk_off();
 				
-				minute_cnt++;
+					minute_cnt++;
 				
-				sc = millis();
+					sc = millis();
 				
-				if (ds == D_IDLE) ds = D_SETUP;						
+					if (dev_st == D_IDLE) dev_st = D_SETUP;						
+				}
+				
+				// go sleep when idle for 10s
+				if (dev_st == D_IDLE && (millis() - sc) > SETUP_IDLE)
+				{
+					led(LED_BR_FULL);    	
+					spk_on();
+					
+					_delay_ms(70);
+				
+					led(LED_BR_NONE);
+					spk_off();
+					
+					go_sleep();
+					break;
+				}
+				
+				// start countdown 3s after last click
+				if (dev_st == D_SETUP && (millis() - sc) > SETUP_CDWN)
+				{
+					dev_st = D_COUNTDOWN;
+					break;
+				}				 
 			}
-			
-			if (ds == D_SETUP && (millis() - sc) > SETUP_CDWN) ds = D_COUNTDOWN;
 		}
+		
 		
 		/* COUNTDOWN */
 		
-		sc = millis();
-		uint64_t cdwn = minute_cnt * 1000UL * 30;
-		uint8_t led_br = 0;		
-		uint8_t led_rg = LED_BR_BREATHE_MAX - LED_BR_BREATHE_MIN; // brightness ranage		
-		uint8_t led_ph = 1;		
-						
-		while(ds == D_COUNTDOWN)
-		{
-			// button check
-			read_button();
-		    
-		    if (bs == B_RELEASED)
-		    {
-		    	led(LED_BR_FULL);    	
-				spk_on();
-					
-				_delay_ms(70);
-				
-				led(LED_BR_NONE);
-				spk_off();
-				
-				go_sleep();
-				break;				
-		    }
-		
-			// led breathe
-			uint8_t tmp_led_br = (((millis() - sc) % LED_BR_BREATHE_CYCLE) * led_rg) / LED_BR_BREATHE_CYCLE;
-						
-			// check for phase change
-			if (led_br > tmp_led_br)
-			{				
-				led_ph ^= 1;
-			}
-						
-			led_br = tmp_led_br;
+		if (dev_st == D_COUNTDOWN)
+		{			
+			uint32_t cdwn = minute_cnt * 1000UL * 30;
+			uint8_t led_br = 0;		
+			uint8_t led_rg = LED_BR_BREATHE_MAX - LED_BR_BREATHE_MIN; // brightness ranage		
+			uint8_t led_ph = 1;			
+			uint32_t sc = millis();						
 			
-			// assign brightness
-			if (led_ph)
-			{				
-				led(LED_BR_BREATHE_MIN + (led_br * (1 + cos( M_PI + ((double)led_br / led_rg) * ( M_PI / 2 ) ))));
-			}
-			else
-			{				
-				led(LED_BR_BREATHE_MAX - (led_br * (cos( (3 * M_PI / 2) + ((double)led_br / led_rg) * ( M_PI / 2 ) ))));
-			}
-									
-			// check countdown finished		
-			if ((millis() - sc) > cdwn)
+			while(1)
 			{
-				ds = D_ALARM;
-				break;
-			}	
-		}			
+				// button check
+				read_button();
+				
+				if (btn_st == B_RELEASED)
+				{
+					led(LED_BR_FULL);    	
+					spk_on();
+					
+					_delay_ms(70);
+				
+					led(LED_BR_NONE);
+					spk_off();
+				
+					go_sleep();
+					break;				
+				}
+				
+				// check countdown finished		
+				if ((millis() - sc) > cdwn)
+				{
+					dev_st = D_ALARM;
+					break;
+				}
+		
+				// led breathe
+				uint8_t tmp_led_br = (((millis() - sc) % LED_BR_BREATHE_CYCLE) * led_rg) / LED_BR_BREATHE_CYCLE;
+						
+				// check for phase change
+				if (led_br > tmp_led_br)
+				{				
+					led_ph ^= 1;
+				}
+						
+				led_br = tmp_led_br;
+			
+				// assign brightness
+				if (led_ph)
+				{				
+					led(LED_BR_BREATHE_MIN + (led_br * (1 + cos( M_PI + ((double)led_br / led_rg) * ( M_PI / 2 ) ))));
+				}
+				else
+				{				
+					led(LED_BR_BREATHE_MAX - (led_br * (cos( (3 * M_PI / 2) + ((double)led_br / led_rg) * ( M_PI / 2 ) ))));
+				}				
+					
+			}			
+		}
 		
 		
 		/* ALARM */
 		
-		uint8_t alm_sch = 0b0000101;
-		uint8_t alm_sch_pos = 0;
-		int16_t alm_b_dur = 70;				
-		uint8_t alm_rpt = 3;		
+		if (dev_st == D_ALARM)
+		{			
+			uint8_t alm_sch = 0b0000101;
+			uint8_t alm_sch_pos = 0;
+			int16_t alm_b_dur = 70;				
+			uint8_t alm_rpt = 3;		
 		
-		// ensures immediate start
-		sc = millis() - alm_b_dur;
-		
-		while(ds == D_ALARM)
-		{  
-			// check timer			
-			if (millis() - sc > alm_b_dur)
-			{
-				// check end of cycle
-				if ((1 << alm_sch_pos) & 0b10000000)
-				{
-					alm_rpt--;
+			// ensures immediate start
+			uint32_t sc = millis() - alm_b_dur;
 					
-					// alarm finished go sleep
-					if (alm_rpt < 1) {
+			while(1)
+			{				
+				// button check
+				read_button();
+				
+				if (btn_st == B_RELEASED)
+				{
+					led(LED_BR_FULL);  	
+					spk_on();
+					
+					_delay_ms(70);
+				
+					led(LED_BR_NONE);
+					spk_off();
+				
+					go_sleep();	
+					break;	
+				}
+				
+				// check timer			
+				if (millis() - sc > alm_b_dur)
+				{
+					// check end of cycle
+					if ((1 << alm_sch_pos) & 0b10000000)
+					{
+						alm_rpt--;
+					
+						// alarm finished go sleep
+						if (alm_rpt < 1) {
 						
-						go_sleep();
-						break;
+							go_sleep();
+							break;
+						}
+						else
+						{
+							alm_sch_pos = 0;
+						}
+					}
+				
+					if ((1 << alm_sch_pos) & alm_sch)
+					{
+						led(LED_BR_FULL);	  		
+		  				spk_on();
 					}
 					else
 					{
-						alm_sch_pos = 0;
+						led(LED_BR_NONE);
+		  				spk_off();
 					}
-				}
 				
-				if ((1 << alm_sch_pos) & alm_sch)
-				{
-					led(LED_BR_FULL);	  		
-	  				spk_on();
-				}
-				else
-				{
-					led(LED_BR_NONE);
-	  				spk_off();
-				}
+					// process the next bit
+					alm_sch_pos++;
 				
-				// process the next bit
-				alm_sch_pos++;
-				
-				// reset timer
-				sc = millis();
+					// reset timer
+					sc = millis();
+				}
+					
 			}
-					  		
-			// button check
-			read_button();
-		    
-		    if (bs == B_RELEASED)
-		    {
-		    	led(LED_BR_FULL);  	
-				spk_on();
-					
-				_delay_ms(70);
-				
-				led(LED_BR_NONE);
-				spk_off();
-				
-				go_sleep();	
-				break;			
-		    }
-					
 		}
 		
 	}
