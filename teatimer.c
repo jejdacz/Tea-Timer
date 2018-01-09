@@ -19,6 +19,7 @@
  * When the alarm is finished the device put itself into sleep mode.
  *
  * Different button (switch) handling. January 7, 2018
+ * TODO: code comments
  */
 
 #include <avr/io.h>
