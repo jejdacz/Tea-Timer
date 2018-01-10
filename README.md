@@ -19,4 +19,5 @@ The countdown is started automatically in 3 seconds after last click.
 The led signals the countdown by a breathe mode. Clicking the button within countdown turns the device to the sleep mode.
 When the countdown is finished an alarm is activated.When the alarm is finished the device put itself into the sleep mode.
 
-
+## State diagram
+![State diagram](https://github.com/jejdacz/Tea-Timer/blob/master/state_d.jpg)
