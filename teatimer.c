@@ -7,19 +7,19 @@
  *      Author: Marek Mego
  *
  * Usage:
- * Push the button to wake up the teatimer. The led signalizes operating mode
- * by low brightness.
- * Set time to countdown by number of button clicks where one click is 30 seconds.
- * The led signalizes a confirmed button click by a blink at 100% of brightness.
- * Maximum delay between taps is 3 seconds.
- * The countdown is started automaticaly in 3 seconds after last tap.
- * The led signalizes the countdown by a brathe mode.
- * Tapping the button within coundown turns device to sleep mode.
- * When the countdown is finished the alarm is activated.
- * When the alarm is finished the device put itself into sleep mode.
+ * Push the button to wake up the tea-timer. The tea-timer goes to the setup mode.
+ * The led at low brightness signals the device is on.
+ * In the setup mode set the countdown time by a number of button clicks
+ * where the each click adds 30 seconds.
+ * The led signals a confirmed button click by a blink at full brightness.
+ * Maximum delay between clicks is 3 seconds. 
+ * When no clicks are performed within 10 seconds the device is put into the sleep mode.
+ * The countdown is started automatically in 3 seconds after last click.
+ * The led signals the countdown by a breathe mode. 
+ * Clicking the button within countdown turns the device to the sleep mode.
+ * When the countdown is finished an alarm is activated.
+ * When the alarm is finished the device put itself into the sleep mode.
  *
- * Different button (switch) handling. January 7, 2018
- * TODO: code comments
  */
 
 #include <avr/io.h>
@@ -27,6 +27,7 @@
 #include <avr/sleep.h>
 #include <math.h>
 
+// CPU frequency [Hz]; 8MHz / 8 prescaler = 1MHz
 #define F_CPU 1000000UL
 
 #include <util/delay.h>
@@ -39,9 +40,8 @@
 #define SETUP_CDWN 3000
 #define SETUP_IDLE 10000
 
-// safety input read delay in us
-// bounce elimination
-#define IR_DUR 3*1000
+// input read delay in us (switch bounce elimination)
+#define IR_DUR 2*1000
 
 // led attributes
 #define LED_PIN PB4
@@ -58,6 +58,7 @@
 // steep time
 uint8_t minute_cnt;
 
+// button last read time stamp
 uint32_t btn_last_read;
 
 // button state
@@ -104,9 +105,12 @@ ISR(TIMER0_OVF_vect)
 
 /**
  * Returns number of microseconds from start.
+ * The micros func counts the number of timer0 overflows.
+ * The timer0 cycle takes 256 us.
+ * TCNT0 is register with a timer0 actual value.
  */
 uint32_t micros()
-{
+{	
 	return micros_cnt * 256 + TCNT0;
 }
 
@@ -133,7 +137,7 @@ void pwm_init()
 	 *
 	 * TCCR1 - timer/counter1 control register
 	 * CS10 - prescaler set to CK/1
-	 * PWM1A - enable PWM mode on chanel A
+	 * PWM1A - enable PWM mode on channel A
 	 * COM1A1 - comparator settings - OC1A cleared on compare match. Set when TCNT1 = 00
 	 * GTCCR - general timer/counter1 control register
 	 * PWM1B - enable PWM mode on chanel B
@@ -198,6 +202,7 @@ void led_off()
  */
 void read_button() {
 	
+	// read input in IR_DUR intervals
 	if ((micros() - btn_last_read) < IR_DUR)
 	{
 		return;
@@ -207,25 +212,32 @@ void read_button() {
 		btn_last_read = micros();
 	}
 		
-		if (btn_st == B_IDLE && ((PINB & (1 << BTN_PIN)) == 0))
+		// switch is ON and state is IDLE or RELEASED
+		if (((PINB & (1 << BTN_PIN)) == 0) && (btn_st == B_IDLE || btn_st == B_RELEASED))
 		{
-			btn_st = B_PRESSED;			
-		}				
+			btn_st = B_PRESSED;
+		}
+						
+		// state is PRESSED or HOLDING
 		else if (btn_st == B_PRESSED || btn_st == B_HOLDING)
 		{			
+			// switch is OFF
 			if (PINB & (1 << BTN_PIN))
 			{
 				btn_st = B_RELEASED;
 			}
+			// switch is ON
 			else
 			{
 				btn_st = B_HOLDING;
 			}
-		}		
+		}
+		
+		// switch is OFF (ON is excluded by the first rule) and state is RELEASED	
 		else if (btn_st == B_RELEASED)
 		{
 			btn_st = B_IDLE;
-		}				
+		}							
 }
 
 /**
@@ -233,7 +245,7 @@ void read_button() {
  */ 
 ISR(INT0_vect)
 {
-	// remove interrrupt mask for button
+	// remove the interrupt mask for button so the interrupt is handled only once
 	GIMSK &= ~(1<<INT0);
 }
 
@@ -242,7 +254,12 @@ ISR(INT0_vect)
  */
 void go_sleep()
 {	
+	// sleep mode signalization
+	led(LED_BR_FULL);	
+	spk_on();
 	
+	_delay_ms(70);
+
 	led(LED_BR_NONE);
 	led_off();
 	spk_off();
@@ -250,30 +267,34 @@ void go_sleep()
 	// apply interrupt mask for button
 	GIMSK |= (1<<INT0);
 	
+	// activate sleep mode
 	sleep_enable();
 	sleep_cpu();		  
 	sleep_disable();
 	
-	on_wakeup();
-}
-
-/**
- * Wake up routine.
- */
-void on_wakeup() {
-		
+	/* WAKE UP */
+	
+	// reset device	
+	reset();
+	
+	// update button state, it is pressed on wake up
 	read_button();
 	
+	// wait for button release on wake up	
 	while (btn_st != B_RELEASED)
 	{
 		read_button();
-		_delay_ms(5);
 	}
+}
+
+/**
+ * Reset routine.
+ */
+void reset() {
 	
 	// set device to defaults
 	minute_cnt = 0;
-	btn_last_read = 0;
-	btn_st = B_IDLE;	
+	btn_last_read = 0;		
 	dev_st = D_IDLE;
 	
 	led_on();
@@ -282,22 +303,42 @@ void on_wakeup() {
  
 int main (void)
 {		
+	
+	
+	/*** INIT ***/
+	
+	
+	// init timer1 - PWM
 	pwm_init();
 	
+	// init timer0 - real time counter
 	micros_init();
 	
-	// init button pin pullup
+	// init button pin pull-up
 	PORTB |= (1 << BTN_PIN);
-			
+	
+	// initial button state
+	btn_st = B_IDLE;
+	
+	// set sleep mode
 	set_sleep_mode(SLEEP_MODE_PWR_DOWN);
 	
-	// wake up on power up 	
-	on_wakeup();	
+	// reset device	
+	reset();
+	
+	// go to sleep mode
+	go_sleep();	
+	
+	
+	/*** THE MAIN LOOP ***/
+	
 	
 	while (1)
 	{
+	
 	  	
-  		/* SETUP */
+  	/*** SETUP ***/
+  	
   		
   		if (dev_st == D_IDLE)
   		{  		
@@ -329,14 +370,6 @@ int main (void)
 				// go sleep when idle for 10s
 				if (dev_st == D_IDLE && (millis() - sc) > SETUP_IDLE)
 				{
-					led(LED_BR_FULL);    	
-					spk_on();
-					
-					_delay_ms(70);
-				
-					led(LED_BR_NONE);
-					spk_off();
-					
 					go_sleep();
 					break;
 				}
@@ -351,13 +384,14 @@ int main (void)
 		}
 		
 		
-		/* COUNTDOWN */
+	/*** COUNTDOWN ***/
+	
 		
 		if (dev_st == D_COUNTDOWN)
 		{			
 			uint32_t cdwn = minute_cnt * 1000UL * 30;
 			uint8_t led_br = 0;		
-			uint8_t led_rg = LED_BR_BREATHE_MAX - LED_BR_BREATHE_MIN; // brightness ranage		
+			uint8_t led_rg = LED_BR_BREATHE_MAX - LED_BR_BREATHE_MIN; // brightness range		
 			uint8_t led_ph = 1;			
 			uint32_t sc = millis();						
 			
@@ -367,15 +401,7 @@ int main (void)
 				read_button();
 				
 				if (btn_st == B_RELEASED)
-				{
-					led(LED_BR_FULL);    	
-					spk_on();
-					
-					_delay_ms(70);
-				
-					led(LED_BR_NONE);
-					spk_off();
-				
+				{				
 					go_sleep();
 					break;				
 				}
@@ -401,18 +427,19 @@ int main (void)
 				// assign brightness
 				if (led_ph)
 				{				
-					led(LED_BR_BREATHE_MIN + (led_br * (1 + cos( M_PI + ((double)led_br / led_rg) * ( M_PI / 2 ) ))));
+					led(LED_BR_BREATHE_MIN + (led_rg * (1 + cos( M_PI + ((double)led_br / led_rg) * ( M_PI / 2 ) ))));
 				}
 				else
 				{				
-					led(LED_BR_BREATHE_MAX - (led_br * (cos( (3 * M_PI / 2) + ((double)led_br / led_rg) * ( M_PI / 2 ) ))));
+					led(LED_BR_BREATHE_MAX - (led_rg * (cos( (3 * M_PI / 2) + ((double)led_br / led_rg) * ( M_PI / 2 ) ))));				
 				}				
 					
 			}			
 		}
 		
 		
-		/* ALARM */
+	/*** ALARM ***/
+	
 		
 		if (dev_st == D_ALARM)
 		{			
@@ -431,14 +458,6 @@ int main (void)
 				
 				if (btn_st == B_RELEASED)
 				{
-					led(LED_BR_FULL);  	
-					spk_on();
-					
-					_delay_ms(70);
-				
-					led(LED_BR_NONE);
-					spk_off();
-				
 					go_sleep();	
 					break;	
 				}
