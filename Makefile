@@ -38,6 +38,6 @@ $(OBJS): $(SRCS)
 flash: $(HEX)
 	avrdude -v -c usbasp -p t85 -U flash:w:$(HEX):i -B 8
 
-# housekeeping
+# clean
 clean:
 	rm -f core $(EXE) $(OBJS) $(HEX)
