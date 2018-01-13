@@ -68,7 +68,7 @@ uint32_t btn_last_read_time;
 uint8_t btn_pin_last_read;
 
 // button state
-enum btn_state { B_IDLE, B_PRESSED, B_HOLD, B_RELEASED };
+enum btn_state { B_IDLE, B_PRESSED, B_HOLD, B_RELEASED, B_UNKNOWN };
 uint8_t btn_st;
 
 // device state
@@ -125,10 +125,9 @@ int main (void)
 	PORTB |= (1 << BTN_PIN);
 	
 	// initial button state
-	btn_st = B_IDLE;
-	
-	//btn_last_read_time = millis();
-	//btn_pin_last_read = (PINB & (1 << BTN_PIN));	
+	// btn_st = B_IDLE;	set in go_sleep
+	btn_last_read_time = 0;
+	btn_pin_last_read = 0;	
 	
 	// set sleep mode
 	set_sleep_mode(SLEEP_MODE_PWR_DOWN);
@@ -162,10 +161,10 @@ int main (void)
 				// handle click
 				if (btn_st == B_PRESSED)
 				{
-					led(LED_BR_FULL);    	
+					led(LED_BR_FULL);   	
 					spk_on();
 					
-					_delay_ms(70);
+					_delay_ms(50);
 				
 					led(LED_BR_SETUP);
 					spk_off();
@@ -205,7 +204,7 @@ int main (void)
 		
 		if (dev_st == D_COUNTDOWN)
 		{			
-			uint32_t cdwn = minute_cnt * 1000UL * 5;
+			uint32_t cdwn = minute_cnt * 1000UL * 30;
 			uint8_t led_br = 0;		
 			uint8_t led_rg = LED_BR_BREATHE_MAX - LED_BR_BREATHE_MIN; // brightness range		
 			uint8_t led_ph = 1;			
@@ -445,17 +444,19 @@ void read_button() {
 	// read pin
 	uint8_t reading = (PINB & (1 << BTN_PIN));
 	
-	// ensure the same value was read for IR_DUR period	
+	// ensure reading the same value	
 	if (reading != btn_pin_last_read)
 	{
 		btn_last_read_time = millis();
 		btn_pin_last_read = reading;
-		return 0;
+		btn_st == B_UNKNOWN;
+		return;
 	}	
 	
+	// ensure stabilization time IR_DUR reached
 	if ((millis() - btn_last_read_time) < IR_DUR)
 	{
-		return 0;
+		return;
 	}
 			
 	// resolve pin reading
@@ -464,21 +465,21 @@ void read_button() {
 		if (btn_st == B_PRESSED || btn_st == B_HOLD)
 		{
 			btn_st = B_HOLD;
-			return 0;
+			return;
 		}
 				
 		btn_st = B_PRESSED;
-		return 1;
+		return;
 	}
 	else
 	{			
 		if (btn_st == B_RELEASED || btn_st == B_IDLE)
 		{
 			btn_st = B_IDLE;
-			return 0;
+			return;
 		}
 		btn_st = B_RELEASED;		
-		return 1;			
+		return;			
 	}							
 }
 
@@ -527,8 +528,6 @@ void reset() {
 	
 	// set device to defaults
 	minute_cnt = 0;
-	btn_last_read_time = millis();
-	btn_pin_last_read = (PINB & (1 << BTN_PIN));	
 			
 	dev_st = D_IDLE;
 	
