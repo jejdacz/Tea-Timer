@@ -1,8 +1,14 @@
+# MCU
+MCU = attiny85
+
 # compiler to use
 CC = avr-gcc
 
 # flags to pass compiler
-CFLAGS = -Os -DF_CPU=1000000UL -mmcu=attiny85
+CFLAGS = -Os -DF_CPU=1000000UL -mmcu=$(MCU)
+
+# flags to avr-size
+SFLAGS = -C --mcu=$(MCU)
 
 # name for executable
 EXE = teatimer
@@ -24,7 +30,8 @@ OBJS = $(SRCS:.c=.o)
 
 # hex file
 $(HEX): $(EXE)
-	avr-objcopy -O ihex -R .eeprom $^ $@
+	avr-objcopy -O ihex -R .eeprom $^ $@	
+	avr-size $(SFLAGS) $^
 
 # executable file
 $(EXE): $(OBJS)
