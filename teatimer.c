@@ -40,8 +40,8 @@
 #define SETUP_CDWN 3000
 #define SETUP_IDLE 10000
 
-// input read delay in us (switch bounce elimination)
-#define IR_DUR 2*1000
+// input read delay in ms (switch bounce elimination)
+#define IR_DUR 30
 
 // led attributes
 #define LED_PIN PB4
@@ -55,6 +55,10 @@
 // define speaker pin
 #define SPK_PIN PB1
 
+
+// counter of microseconds
+volatile uint32_t micros_cnt;
+
 // steep time
 uint8_t minute_cnt;
 
@@ -63,37 +67,27 @@ uint32_t btn_last_read;
 
 // button state
 enum btn_state { B_IDLE, B_PRESSED, B_HOLDING, B_RELEASED };
-
 enum btn_state btn_st;
 
 // device state
 enum dev_state { D_IDLE, D_SETUP, D_COUNTDOWN, D_ALARM };
-
 enum dev_state dev_st;
 
-// functions prototypes
+// functions' prototypes
 void on_wakeup();
+void reset();
+void micros_init();
+uint32_t micros();
+uint32_t millis();
+void pwm_init();
+void led(uint8_t br);
+void led_on();
+void led_off();
+void spk_on();
+void spk_off();
+void read_button();
+void go_sleep();
 
-// counter of microseconds
-volatile uint32_t micros_cnt;
-
-/**
- * Inits TIMER0 for micros.
- */
-void micros_init()
-{
-	// init counter
-	micros_cnt = 0;
-	
-	// enable TIMER0, set prescaler to CK/1	
-	TCCR0B |= (1<<CS00);
-		
-	// enable TIMER0 overflow interrupt
-	TIMSK |= (1<<TOIE0);
-	
-	// enable interrupts
-	sei();
-}
 
 /**
  * Updates micros on TIMER0 overflow.
@@ -101,143 +95,6 @@ void micros_init()
 ISR(TIMER0_OVF_vect)
 {    
     micros_cnt++;     
-}
-
-/**
- * Returns number of microseconds from start.
- * The micros func counts the number of timer0 overflows.
- * The timer0 cycle takes 256 us.
- * TCNT0 is register with a timer0 actual value.
- */
-uint32_t micros()
-{	
-	return micros_cnt * 256 + TCNT0;
-}
-
-/**
- * Returns number of milliseconds from start.
- */
-uint32_t millis()
-{
-	return micros() / 1000;
-}
-
-/**
- * Inits PWM mode on TIMER1.
- */
-void pwm_init()
-{		
-	/**
-	 * Init TIMER1 at 4KHz clock.
-	 * Timer1 source is set to cpu clock.
-	 * CPU CLOCK: 8MHz internal OSC with prescaler 8 = 1MHz
-	 *
-	 * Timer1   f = prescaler * clock / OCR1C + 1
-	 *			4000 = 1 * 1000.000 / 249 + 1
-	 *
-	 * TCCR1 - timer/counter1 control register
-	 * CS10 - prescaler set to CK/1
-	 * PWM1A - enable PWM mode on channel A
-	 * COM1A1 - comparator settings - OC1A cleared on compare match. Set when TCNT1 = 00
-	 * GTCCR - general timer/counter1 control register
-	 * PWM1B - enable PWM mode on chanel B
-	 * COM1B1 - comparator settings - OC1B cleared on compare match. Set when TCNT1 = 00
-	 * OCR1A - comparator A match value
-	 * OCR1C - timer/counter counts up to OCR1C value then TOV1 flag is set
-	 * OCR1B - comparator B match value
-	 */
-	 
-	TCCR1 |= (1<<CS10) | (1<<PWM1A) | (1<<COM1A1);
-	GTCCR |= (1<<PWM1B) | (1<<COM1B1);
-		
-	// init compare A value
-	OCR1A = 249 / 2;
-	
-	// timer reset value
-	OCR1C = 249;			
-}
-
-/**
- * Sets led brightness.
- */
-void led(uint8_t br)
-{
-	OCR1B = br;
-}
-
-/**
- * Speaker on.
- */
-void spk_on()
-{
-	DDRB |= (1<<SPK_PIN);
-}
-
-/**
- * Speaker off.
- */
-void spk_off()
-{
-	DDRB &= ~(1<<SPK_PIN);
-}
-
-/**
- * Led on.
- */
-void led_on()
-{
-	DDRB |= (1<<LED_PIN);
-}
-
-/**
- * Led off.
- */
-void led_off()
-{
-	DDRB &= ~(1<<LED_PIN);
-}
-
-/**
- * Reads and handles button state.
- */
-void read_button() {
-	
-	// read input in IR_DUR intervals
-	if ((micros() - btn_last_read) < IR_DUR)
-	{
-		return;
-	}
-	else
-	{
-		btn_last_read = micros();
-	}
-		
-		// switch is ON and state is IDLE or RELEASED
-		if (((PINB & (1 << BTN_PIN)) == 0) && (btn_st == B_IDLE || btn_st == B_RELEASED))
-		{
-			btn_st = B_PRESSED;
-		}
-						
-		// state is PRESSED or HOLDING
-		else if (btn_st == B_PRESSED || btn_st == B_HOLDING)
-		{			
-			// switch is OFF
-			if (PINB & (1 << BTN_PIN))
-			{
-				btn_st = B_RELEASED;
-			}
-			// switch is ON
-			else
-			{
-				btn_st = B_HOLDING;
-			}
-		}
-		
-		// switch is OFF (ON is excluded by the first rule) and state is RELEASED	
-		else if (btn_st == B_RELEASED)
-		{
-			btn_st = B_IDLE;
-		}							
 }
 
 /**
@@ -249,61 +106,9 @@ ISR(INT0_vect)
 	GIMSK &= ~(1<<INT0);
 }
 
-/**
- * Go sleep routine.
- */
-void go_sleep()
-{	
-	// sleep mode signalization
-	led(LED_BR_FULL);	
-	spk_on();
-	
-	_delay_ms(70);
-
-	led(LED_BR_NONE);
-	led_off();
-	spk_off();
-		
-	// apply interrupt mask for button
-	GIMSK |= (1<<INT0);
-	
-	// activate sleep mode
-	sleep_enable();
-	sleep_cpu();		  
-	sleep_disable();
-	
-	/* WAKE UP */
-	
-	// reset device	
-	reset();
-	
-	// update button state, it is pressed on wake up
-	read_button();
-	
-	// wait for button release on wake up	
-	while (btn_st != B_RELEASED)
-	{
-		read_button();
-	}
-}
-
-/**
- * Reset routine.
- */
-void reset() {
-	
-	// set device to defaults
-	minute_cnt = 0;
-	btn_last_read = 0;		
-	dev_st = D_IDLE;
-	
-	led_on();
-	led(LED_BR_SETUP);
-}
  
 int main (void)
-{		
-	
+{	
 	
 	/*** INIT ***/
 	
@@ -509,3 +314,209 @@ int main (void)
 }
 
 
+/**
+ * Inits TIMER0 for micros.
+ */
+void micros_init()
+{
+	// init counter
+	micros_cnt = 0;
+	
+	// enable TIMER0, set prescaler to CK/1	
+	TCCR0B |= (1<<CS00);
+		
+	// enable TIMER0 overflow interrupt
+	TIMSK |= (1<<TOIE0);
+	
+	// enable interrupts
+	sei();
+}
+
+/**
+ * Returns number of microseconds from start.
+ * The micros func counts the number of timer0 overflows.
+ * The timer0 cycle takes 256 us.
+ * TCNT0 is register with a timer0 actual value.
+ */
+uint32_t micros()
+{	
+	return micros_cnt * 256 + TCNT0;
+}
+
+/**
+ * Returns number of milliseconds from start.
+ */
+uint32_t millis()
+{
+	return micros() / 1000;
+}
+
+/**
+ * Inits PWM mode on TIMER1.
+ */
+void pwm_init()
+{		
+	/**
+	 * Init TIMER1 at 4KHz clock.
+	 * Timer1 source is set to cpu clock.
+	 * CPU CLOCK: 8MHz internal OSC with prescaler 8 = 1MHz
+	 *
+	 * Timer1   f = prescaler * clock / OCR1C + 1
+	 *			4000 = 1 * 1000.000 / 249 + 1
+	 *
+	 * TCCR1 - timer/counter1 control register
+	 * CS10 - prescaler set to CK/1
+	 * PWM1A - enable PWM mode on channel A
+	 * COM1A1 - comparator settings - OC1A cleared on compare match. Set when TCNT1 = 00
+	 * GTCCR - general timer/counter1 control register
+	 * PWM1B - enable PWM mode on chanel B
+	 * COM1B1 - comparator settings - OC1B cleared on compare match. Set when TCNT1 = 00
+	 * OCR1A - comparator A match value
+	 * OCR1C - timer/counter counts up to OCR1C value then TOV1 flag is set
+	 * OCR1B - comparator B match value
+	 */
+	 
+	TCCR1 |= (1<<CS10) | (1<<PWM1A) | (1<<COM1A1);
+	GTCCR |= (1<<PWM1B) | (1<<COM1B1);
+		
+	// init compare A value
+	OCR1A = 249 / 2;
+	
+	// timer reset value
+	OCR1C = 249;			
+}
+
+/**
+ * Speaker on.
+ */
+void spk_on()
+{
+	DDRB |= (1<<SPK_PIN);
+}
+
+/**
+ * Speaker off.
+ */
+void spk_off()
+{
+	DDRB &= ~(1<<SPK_PIN);
+}
+
+/**
+ * Led on.
+ */
+void led_on()
+{
+	DDRB |= (1<<LED_PIN);
+}
+
+/**
+ * Led off.
+ */
+void led_off()
+{
+	DDRB &= ~(1<<LED_PIN);
+}
+
+/**
+ * Sets led brightness.
+ */
+void led(uint8_t br)
+{
+	OCR1B = br;
+}
+
+/**
+ * Reads and handles button state.
+ */
+void read_button() {
+	
+	// read input in IR_DUR intervals
+	if ((millis() - btn_last_read) < IR_DUR)
+	{
+		return;
+	}
+	else
+	{
+		btn_last_read = millis();
+	}
+		
+		// switch is ON and state is IDLE or RELEASED
+		if (((PINB & (1 << BTN_PIN)) == 0) && (btn_st == B_IDLE || btn_st == B_RELEASED))
+		{
+			btn_st = B_PRESSED;
+		}
+						
+		// state is PRESSED or HOLDING
+		else if (btn_st == B_PRESSED || btn_st == B_HOLDING)
+		{			
+			// switch is OFF
+			if (PINB & (1 << BTN_PIN))
+			{
+				btn_st = B_RELEASED;
+			}
+			// switch is ON
+			else
+			{
+				btn_st = B_HOLDING;
+			}
+		}
+		
+		// switch is OFF (ON is excluded by the first rule) and state is RELEASED	
+		else if (btn_st == B_RELEASED)
+		{
+			btn_st = B_IDLE;
+		}							
+}
+
+/**
+ * Go sleep routine.
+ */
+void go_sleep()
+{	
+	// sleep mode signalization
+	led(LED_BR_FULL);	
+	spk_on();
+	
+	_delay_ms(70);
+
+	led(LED_BR_NONE);
+	led_off();
+	spk_off();
+		
+	// apply interrupt mask for button
+	GIMSK |= (1<<INT0);
+	
+	// activate sleep mode
+	sleep_enable();
+	sleep_cpu();		  
+	sleep_disable();
+	
+	/* WAKE UP */
+	
+	// reset device	
+	reset();
+	
+	// update button state, it is pressed on wake up
+	read_button();
+	
+	// wait for button release on wake up	
+	while (btn_st != B_RELEASED)
+	{
+		read_button();
+	}
+}
+
+/**
+ * Reset routine.
+ */
+void reset() {
+	
+	// set device to defaults
+	minute_cnt = 0;
+	btn_last_read = 0;		
+	dev_st = D_IDLE;
+	
+	led_on();
+	led(LED_BR_SETUP);
+}
