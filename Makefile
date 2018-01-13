@@ -48,3 +48,6 @@ flash: $(HEX)
 # clean
 clean:
 	rm -f core $(EXE) $(OBJS) $(HEX)
+	
+.PHONY: clean flash
+
