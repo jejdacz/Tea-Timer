@@ -61,15 +61,17 @@ volatile uint32_t micros_cnt;
 // steep time
 uint8_t minute_cnt;
 
-// button last read time stamp
-uint32_t btn_last_read_time;
-
-// button last read state HIGH / LOW
-uint8_t btn_pin_last_read;
-
 // button state
 enum btn_state { B_IDLE, B_PRESSED, B_HOLD, B_RELEASED, B_UNKNOWN };
-uint8_t btn_st;
+
+// button attributes
+typedef struct{
+	uint32_t lst_t; // last read time
+	uint8_t lst_r; // last read value
+	uint8_t state;	// state; enum btn_state
+} btn_t;
+
+btn_t btn;
 
 // device state
 enum dev_state { D_IDLE, D_SETUP, D_COUNTDOWN, D_ALARM };
@@ -89,7 +91,6 @@ void spk_on();
 void spk_off();
 void read_button();
 void go_sleep();
-
 
 /**
  * Updates micros on TIMER0 overflow.
@@ -125,9 +126,9 @@ int main (void)
 	PORTB |= (1 << BTN_PIN);
 	
 	// initial button state
-	// btn_st = B_IDLE;	set in go_sleep
-	btn_last_read_time = 0;
-	btn_pin_last_read = 0;	
+	//btn.state = B_IDLE;
+	btn.lst_t = 0;
+	btn.lst_r = 0;	
 	
 	// set sleep mode
 	set_sleep_mode(SLEEP_MODE_PWR_DOWN);
@@ -152,14 +153,13 @@ int main (void)
   		if (dev_st == D_IDLE)
   		{  		
 	  		uint32_t sc = millis();
-	  		uint8_t setup = 0;
-	  		  		
+	  			  		  		
 	  		while (1)
 	  		{	  		
 				read_button();
 				
 				// handle click
-				if (btn_st == B_PRESSED)
+				if (btn.state == B_PRESSED)
 				{
 					led(LED_BR_FULL);   	
 					spk_on();
@@ -172,7 +172,7 @@ int main (void)
 					minute_cnt++;
 					
 					// wait for button release
-					while (btn_st != B_RELEASED)
+					while (btn.state != B_RELEASED)
 					{
 						read_button();
 					}
@@ -215,7 +215,7 @@ int main (void)
 				// button check
 				read_button();
 				
-				if (btn_st == B_RELEASED)
+				if (btn.state == B_RELEASED)
 				{				
 					go_sleep();
 					break;				
@@ -271,7 +271,7 @@ int main (void)
 				// button check
 				read_button();
 				
-				if (btn_st == B_RELEASED)
+				if (btn.state == B_RELEASED)
 				{
 					go_sleep();	
 					break;	
@@ -445,16 +445,16 @@ void read_button() {
 	uint8_t reading = (PINB & (1 << BTN_PIN));
 	
 	// ensure reading the same value	
-	if (reading != btn_pin_last_read)
+	if (reading != btn.lst_r)
 	{
-		btn_last_read_time = millis();
-		btn_pin_last_read = reading;
-		btn_st == B_UNKNOWN;
+		btn.lst_t = millis();
+		btn.lst_r = reading;
+		btn.state == B_UNKNOWN;
 		return;
 	}	
 	
 	// ensure stabilization time IR_DUR reached
-	if ((millis() - btn_last_read_time) < IR_DUR)
+	if ((millis() - btn.lst_t) < IR_DUR)
 	{
 		return;
 	}
@@ -462,23 +462,23 @@ void read_button() {
 	// resolve pin reading
 	if (reading == 0)
 	{
-		if (btn_st == B_PRESSED || btn_st == B_HOLD)
+		if (btn.state == B_PRESSED || btn.state == B_HOLD)
 		{
-			btn_st = B_HOLD;
+			btn.state = B_HOLD;
 			return;
 		}
 				
-		btn_st = B_PRESSED;
+		btn.state = B_PRESSED;
 		return;
 	}
 	else
 	{			
-		if (btn_st == B_RELEASED || btn_st == B_IDLE)
+		if (btn.state == B_RELEASED || btn.state == B_IDLE)
 		{
-			btn_st = B_IDLE;
+			btn.state = B_IDLE;
 			return;
 		}
-		btn_st = B_RELEASED;		
+		btn.state = B_RELEASED;		
 		return;			
 	}							
 }
@@ -512,10 +512,10 @@ void go_sleep()
 	reset();
 	
 	// button is held on wake up
-	btn_st = B_HOLD;
+	btn.state = B_HOLD;
 		
 	// wait for button release on wake up	
-	while (btn_st != B_IDLE)
+	while (btn.state != B_IDLE)
 	{
 		read_button();
 	}
