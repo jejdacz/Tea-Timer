@@ -41,7 +41,7 @@
 #define SETUP_IDLE 10000
 
 // input read delay in ms (switch bounce elimination)
-#define IR_DUR 30
+#define IR_DUR 10
 
 // led attributes
 #define LED_PIN PB4
@@ -55,7 +55,6 @@
 // define speaker pin
 #define SPK_PIN PB1
 
-
 // counter of microseconds
 volatile uint32_t micros_cnt;
 
@@ -63,15 +62,18 @@ volatile uint32_t micros_cnt;
 uint8_t minute_cnt;
 
 // button last read time stamp
-uint32_t btn_last_read;
+uint32_t btn_last_read_time;
+
+// button last read state HIGH / LOW
+uint8_t btn_pin_last_read;
 
 // button state
-enum btn_state { B_IDLE, B_PRESSED, B_HOLDING, B_RELEASED };
-enum btn_state btn_st;
+enum btn_state { B_IDLE, B_PRESSED, B_HOLD, B_RELEASED };
+uint8_t btn_st;
 
 // device state
 enum dev_state { D_IDLE, D_SETUP, D_COUNTDOWN, D_ALARM };
-enum dev_state dev_st;
+uint8_t dev_st;
 
 // functions' prototypes
 void on_wakeup();
@@ -125,6 +127,9 @@ int main (void)
 	// initial button state
 	btn_st = B_IDLE;
 	
+	//btn_last_read_time = millis();
+	//btn_pin_last_read = (PINB & (1 << BTN_PIN));	
+	
 	// set sleep mode
 	set_sleep_mode(SLEEP_MODE_PWR_DOWN);
 	
@@ -164,12 +169,18 @@ int main (void)
 				
 					led(LED_BR_SETUP);
 					spk_off();
-				
+									
 					minute_cnt++;
+					
+					// wait for button release
+					while (btn_st != B_RELEASED)
+					{
+						read_button();
+					}
+					
+					sc = millis();				
 				
-					sc = millis();
-				
-					if (dev_st == D_IDLE) dev_st = D_SETUP;						
+					if (dev_st == D_IDLE) dev_st = D_SETUP;
 				}
 				
 				// go sleep when idle for 10s
@@ -194,7 +205,7 @@ int main (void)
 		
 		if (dev_st == D_COUNTDOWN)
 		{			
-			uint32_t cdwn = minute_cnt * 1000UL * 30;
+			uint32_t cdwn = minute_cnt * 1000UL * 5;
 			uint8_t led_br = 0;		
 			uint8_t led_rg = LED_BR_BREATHE_MAX - LED_BR_BREATHE_MIN; // brightness range		
 			uint8_t led_ph = 1;			
@@ -431,42 +442,44 @@ void led(uint8_t br)
  */
 void read_button() {
 	
-	// read input in IR_DUR intervals
-	if ((millis() - btn_last_read) < IR_DUR)
+	// read pin
+	uint8_t reading = (PINB & (1 << BTN_PIN));
+	
+	// ensure the same value was read for IR_DUR period	
+	if (reading != btn_pin_last_read)
 	{
-		return;
+		btn_last_read_time = millis();
+		btn_pin_last_read = reading;
+		return 0;
+	}	
+	
+	if ((millis() - btn_last_read_time) < IR_DUR)
+	{
+		return 0;
+	}
+			
+	// resolve pin reading
+	if (reading == 0)
+	{
+		if (btn_st == B_PRESSED || btn_st == B_HOLD)
+		{
+			btn_st = B_HOLD;
+			return 0;
+		}
+				
+		btn_st = B_PRESSED;
+		return 1;
 	}
 	else
-	{
-		btn_last_read = millis();
-	}
-		
-		// switch is ON and state is IDLE or RELEASED
-		if (((PINB & (1 << BTN_PIN)) == 0) && (btn_st == B_IDLE || btn_st == B_RELEASED))
-		{
-			btn_st = B_PRESSED;
-		}
-						
-		// state is PRESSED or HOLDING
-		else if (btn_st == B_PRESSED || btn_st == B_HOLDING)
-		{			
-			// switch is OFF
-			if (PINB & (1 << BTN_PIN))
-			{
-				btn_st = B_RELEASED;
-			}
-			// switch is ON
-			else
-			{
-				btn_st = B_HOLDING;
-			}
-		}
-		
-		// switch is OFF (ON is excluded by the first rule) and state is RELEASED	
-		else if (btn_st == B_RELEASED)
+	{			
+		if (btn_st == B_RELEASED || btn_st == B_IDLE)
 		{
 			btn_st = B_IDLE;
-		}							
+			return 0;
+		}
+		btn_st = B_RELEASED;		
+		return 1;			
+	}							
 }
 
 /**
@@ -494,14 +507,14 @@ void go_sleep()
 	
 	/* WAKE UP */
 	
-	// reset device	
+	// reset device
 	reset();
 	
-	// update button state, it is pressed on wake up
-	read_button();
-	
+	// button is held on wake up
+	btn_st = B_HOLD;
+		
 	// wait for button release on wake up	
-	while (btn_st != B_RELEASED)
+	while (btn_st != B_IDLE)
 	{
 		read_button();
 	}
@@ -514,7 +527,9 @@ void reset() {
 	
 	// set device to defaults
 	minute_cnt = 0;
-	btn_last_read = 0;		
+	btn_last_read_time = millis();
+	btn_pin_last_read = (PINB & (1 << BTN_PIN));	
+			
 	dev_st = D_IDLE;
 	
 	led_on();
