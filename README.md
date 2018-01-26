@@ -1,5 +1,6 @@
 # Tea-Timer
 Tea timer by ATtiny85V AVR 8bit microcontroller.
+![product](https://github.com/jejdacz/Tea-Timer/blob/master/tea_timer_product.jpg)
 
 ## Problem statement
 We need a timer for tea steeping. 
